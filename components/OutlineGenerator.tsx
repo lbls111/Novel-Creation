@@ -1,7 +1,7 @@
+
 import React, { useState, useMemo, useEffect } from 'react';
 import type { StoryOutline, GeneratedChapter, StoryOptions, FinalDetailedOutline, PlotPointAnalysis, OutlineCritique, ScoringDimension, ImprovementSuggestion, OptimizationHistoryEntry, DetailedOutlineAnalysis, OutlineGenerationProgress } from '../types';
-// FIX: The generateSingleOutlineIterationStream is now correctly implemented and exported from geminiService.
-import { generateChapterTitles, generateSingleOutlineIterationStream, generateNarrativeToolboxSuggestions } from '../services/geminiService';
+import { generateChapterTitles, generateDetailedOutline, critiqueDetailedOutline, generateNarrativeToolboxSuggestions } from '../services/geminiService';
 import SparklesIcon from './icons/SparklesIcon';
 import LoadingSpinner from './icons/LoadingSpinner';
 import SendIcon from './icons/SendIcon';
@@ -19,9 +19,6 @@ interface OutlineGeneratorProps {
     storyOptions: StoryOptions;
     activeOutlineTitle: string | null;
     setActiveOutlineTitle: React.Dispatch<React.SetStateAction<string | null>>;
-    isGenerating: boolean;
-    setIsGenerating: React.Dispatch<React.SetStateAction<boolean>>;
-    setProgress: React.Dispatch<React.SetStateAction<OutlineGenerationProgress | null>>;
     setController: React.Dispatch<React.SetStateAction<AbortController | null>>;
 }
 
@@ -187,14 +184,12 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
     storyOptions,
     activeOutlineTitle,
     setActiveOutlineTitle,
-    isGenerating,
-    setIsGenerating,
-    setProgress,
     setController,
 }) => {
     const [isLoadingTitles, setIsLoadingTitles] = useState(false);
     const [userInput, setUserInput] = useState('');
     const [error, setError] = useState<string | null>(null);
+    const [generationStatus, setGenerationStatus] = useState<string | null>(null);
     
     const [isCopied, setIsCopied] = useState(false);
 
@@ -206,8 +201,10 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
     useEffect(() => {
         setToolboxResult(null);
         setToolboxError(null);
+        setError(null);
     }, [activeOutlineTitle]);
 
+    // Parse outline with error handling, BUT NO SIDE EFFECTS (like setError) inside useMemo
     const parsedOutline = useMemo<FinalDetailedOutline | null>(() => {
         if (!activeOutlineTitle || !outlineHistory[activeOutlineTitle]) return null;
         try {
@@ -216,17 +213,36 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
             const endTag = '\\[END_DETAILED_OUTLINE_JSON\\]';
             const regex = new RegExp(`${startTag}([\\s\\S]*?)${endTag}`);
             const match = text.match(regex);
-            if (!match || !match[1]) return null;
+            
+            if (!match || !match[1]) {
+                // Return null here, handle error in useEffect
+                return null;
+            }
+            
             let jsonString = match[1].trim().replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
             return JSON.parse(jsonString) as FinalDetailedOutline;
         } catch (e) {
-            console.error("CRITICAL: Failed to parse detailed outline from history. Data might be corrupted.", e);
-            setError(`无法解析章节 "${activeOutlineTitle}" 的细纲数据。数据可能已损坏，请尝试重新生成。`);
+            console.error("Failed to parse outline", e);
             return null;
         }
     }, [activeOutlineTitle, outlineHistory]);
 
+    // Effect to detect parsing errors
+    useEffect(() => {
+        if (activeOutlineTitle && outlineHistory[activeOutlineTitle] && !parsedOutline) {
+            setError(`解析章节 "${activeOutlineTitle}" 的细纲数据失败。数据可能已损坏，请尝试重新生成。`);
+        }
+    }, [activeOutlineTitle, outlineHistory, parsedOutline]);
+
+    const isGenerating = !!generationStatus;
+
     const handleGenerateTitles = async () => {
+        // Validation: Check if planning model is set
+        if (!storyOptions.planningModel) {
+            setError("未配置规划模型。请在“设置”中选择一个模型（建议使用 Flash 模型以获得更快的速度）。");
+            return;
+        }
+
         setIsLoadingTitles(true);
         setError(null);
         setActiveOutlineTitle(null);
@@ -240,60 +256,85 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
         }
     };
 
-    // FIX: Refactored to use the new streaming service function.
-    // The logic for preparing `previousAttempt` is now encapsulated in the service.
-    // The component now passes the entire `parsedOutline` and consumes progress updates from the stream.
-    const handleGenerateIteration = async (optionalUserInput?: string) => {
+    const handleGenerateAndCritique = async (optionalUserInput?: string) => {
         if (!activeOutlineTitle) return;
 
-        setIsGenerating(true);
-        setProgress(null);
+        // Validation: Check if planning model is set
+        if (!storyOptions.planningModel) {
+            setError("未配置规划模型。请在“设置”中选择一个模型（建议使用 Flash 模型以获得更快的速度）。");
+            return;
+        }
+
         setError(null);
-        
         const ac = new AbortController();
         setController(ac);
 
-        try {
-            // If it's the first run for this title, clear any potentially stale data.
-            if (!parsedOutline) {
-                setOutlineHistory(prev => {
-                    const newHistory = {...prev};
-                    delete newHistory[activeOutlineTitle];
-                    return newHistory;
-                });
+        const isRefinement = !!parsedOutline;
+        const currentVersion = (parsedOutline?.finalVersion || 0) + 1;
+        let previousAttempt: { outline: DetailedOutlineAnalysis, critique: OutlineCritique } | null = null;
+        
+        if (isRefinement && parsedOutline) {
+            const historyLen = parsedOutline.optimizationHistory.length;
+            if (historyLen > 0) {
+                const latestHistory = parsedOutline.optimizationHistory[historyLen - 1];
+                previousAttempt = {
+                    outline: latestHistory.outline,
+                    critique: latestHistory.critique
+                };
             }
-
-            const stream = generateSingleOutlineIterationStream(
+        } else {
+            // Clear previous result before starting a new one
+            setOutlineHistory(prev => {
+                const newHistory = {...prev};
+                delete newHistory[activeOutlineTitle];
+                return newHistory;
+            });
+        }
+        
+        try {
+            // Step 1: Generate Outline
+            setGenerationStatus(`v${currentVersion} - 正在生成初稿...`);
+            const outlineResponse = await generateDetailedOutline(
                 storyOutline, chapters, activeOutlineTitle, storyOptions,
-                parsedOutline, // Pass the whole parsed outline which contains history
+                previousAttempt,
                 optionalUserInput || userInput,
                 ac.signal
             );
+            const newOutline = outlineResponse.outline;
+
+            // Step 2: Critique Outline
+            setGenerationStatus(`v${currentVersion} - 正在评估稿件...`);
+            const critiqueResponse = await critiqueDetailedOutline(
+                newOutline, storyOutline, activeOutlineTitle, storyOptions, ac.signal
+            );
+            const newCritique = critiqueResponse.critique;
+
+            // Step 3: Combine and save
+            const newHistoryEntry: OptimizationHistoryEntry = {
+                version: currentVersion,
+                critique: newCritique,
+                outline: newOutline
+            };
+
+            const finalOutline: FinalDetailedOutline = {
+                ...newOutline,
+                finalVersion: currentVersion,
+                optimizationHistory: isRefinement && parsedOutline ? [...parsedOutline.optimizationHistory, newHistoryEntry] : [newHistoryEntry]
+            };
             
+            const resultString = `[START_DETAILED_OUTLINE_JSON]\n${JSON.stringify(finalOutline, null, 2)}\n[END_DETAILED_OUTLINE_JSON]`;
+            setOutlineHistory(prev => ({ ...prev, [activeOutlineTitle]: resultString }));
             setUserInput(''); // Clear input after use
-
-            for await (const progress of stream) {
-                if (progress.status === 'error') {
-                    throw new Error(progress.message || 'An unknown stream error occurred.');
-                }
-
-                setProgress(progress);
-
-                if (progress.status === 'complete' && progress.finalOutline) {
-                    const resultString = `[START_DETAILED_OUTLINE_JSON]\n${JSON.stringify(progress.finalOutline, null, 2)}\n[END_DETAILED_OUTLINE_JSON]`;
-                    setOutlineHistory(prev => ({ ...prev, [activeOutlineTitle]: resultString }));
-                    break; 
-                }
-            }
 
         } catch (e: any) {
             const errorMessage = e.message || "生成细纲时发生未知错误。";
-             if (e.name !== 'AbortError' && !errorMessage.includes('aborted')) {
+             if (e.name === 'AbortError') {
+                setError("操作已中止。");
+            } else {
                 setError(errorMessage);
-                setProgress(prev => prev ? {...prev, status: 'error', message: errorMessage} : null);
-             }
+            }
         } finally {
-            setIsGenerating(false); 
+            setGenerationStatus(null);
             setController(null);
         }
     };
@@ -334,7 +375,7 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
     const handleAdoptSuggestion = () => {
         if (!toolboxResult) return;
         const adoptionPrompt = `根据以下AI叙事医生的建议，对当前细纲进行一次迭代优化：\n\n---建议开始---\n${toolboxResult}\n---建议结束---`;
-        handleGenerateIteration(adoptionPrompt);
+        handleGenerateAndCritique(adoptionPrompt);
     };
 
     const nextChapterStart = chapters.length + 1;
@@ -396,7 +437,7 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
                     </div>
                     
                     <div className='p-4 rounded-lg bg-slate-900/50 space-y-4'>
-                        <form onSubmit={(e) => { e.preventDefault(); handleGenerateIteration(); }} className="space-y-3">
+                        <form onSubmit={(e) => { e.preventDefault(); handleGenerateAndCritique(); }} className="space-y-3">
                             <div>
                                 <label htmlFor="outline-prompt" className="block text-xs font-medium text-slate-400 mb-1">
                                     {parsedOutline ? `优化 v${parsedOutline.finalVersion + 1} 指令 (可选)`: '初稿生成指令 (可选)'}
@@ -418,7 +459,7 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
                                 className="w-full flex items-center justify-center px-4 py-2 bg-cyan-600 text-white font-bold rounded-lg hover:bg-cyan-500 transition-transform transform hover:scale-105 shadow-lg disabled:bg-slate-600 disabled:cursor-not-allowed"
                             >
                                 {isGenerating ? <LoadingSpinner className="w-5 h-5 mr-2"/> : <SparklesIcon className="w-5 h-5 mr-2" />}
-                                {isGenerating ? '正在生成...' : (parsedOutline ? `生成优化稿 (v${parsedOutline.finalVersion + 1})` : '生成初稿 (v1)')}
+                                {generationStatus ? generationStatus : (parsedOutline ? `生成优化稿 (v${parsedOutline.finalVersion + 1})` : '生成初稿 (v1)')}
                             </button>
                         </form>
                     </div>
