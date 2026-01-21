@@ -9,6 +9,7 @@ import CopyIcon from './icons/CopyIcon';
 import RefreshCwIcon from './icons/RefreshCwIcon';
 import BrainCircuitIcon from './icons/BrainCircuitIcon'; // Reused for model indicator
 import ThoughtProcessVisualizer from './ThoughtProcessVisualizer';
+import FilePenIcon from './icons/FilePenIcon';
 
 interface OutlineGeneratorProps {
     storyOutline: StoryOutline;
@@ -21,6 +22,7 @@ interface OutlineGeneratorProps {
     activeOutlineTitle: string | null;
     setActiveOutlineTitle: React.Dispatch<React.SetStateAction<string | null>>;
     setController: React.Dispatch<React.SetStateAction<AbortController | null>>;
+    onStartWriting: (chapterTitle: string, outlineJson: string) => void;
 }
 
 // Utility to parse max chapters from the StoryLength string
@@ -206,6 +208,7 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
     activeOutlineTitle,
     setActiveOutlineTitle,
     setController,
+    onStartWriting
 }) => {
     const [isLoadingTitles, setIsLoadingTitles] = useState(false);
     const [userInput, setUserInput] = useState('');
@@ -221,7 +224,8 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
     // Calculate Limits
     const maxChapters = useMemo(() => getMaxChapters(storyOptions.length), [storyOptions.length]);
     const currentChapterCount = generatedTitles.length;
-    const remainingChapters = maxChapters - currentChapterCount;
+    // Strictly cap the remaining chapters
+    const remainingChapters = Math.max(0, maxChapters - currentChapterCount);
     const isMaxReached = remainingChapters <= 0;
 
     // Clear toolbox result when active outline changes
@@ -278,7 +282,18 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
         setActiveOutlineTitle(null);
         try {
             const titles = await generateChapterTitles(storyOutline, chapters, storyOptions);
-            setGeneratedTitles(prev => [...prev, ...titles]);
+            // Strict enforcement: Truncate any extra titles if AI hallucinated more than requested
+            // Calculate how many we can actually add
+            const slotsAvailable = maxChapters - generatedTitles.length;
+            const validTitles = titles.slice(0, slotsAvailable);
+            
+            setGeneratedTitles(prev => [...prev, ...validTitles]);
+            
+            if (titles.length > slotsAvailable) {
+                // Optionally warn user that AI tried to generate too many
+                console.warn(`AI generated ${titles.length} titles, but strict limit allowed only ${slotsAvailable}. Truncated.`);
+            }
+
         } catch (e: any) {
             setError(e.message || "生成章节标题时发生未知错误。");
         } finally {
@@ -430,7 +445,7 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
                     {isMaxReached && <span className="text-xs font-bold text-red-500 bg-red-900/20 px-2 py-1 rounded">篇幅已达上限</span>}
                 </div>
                 {/* Progress Bar */}
-                <div className="w-full bg-slate-800 rounded-full h-1.5 mb-4">
+                <div className="w-full bg-slate-800 rounded-full h-1.5 mb-4 relative overflow-hidden">
                     <div 
                         className={`bg-gradient-to-r ${isMaxReached ? 'from-red-600 to-red-400' : 'from-teal-600 to-sky-400'} h-1.5 rounded-full transition-all duration-500`} 
                         style={{ width: `${Math.min(100, (currentChapterCount / maxChapters) * 100)}%` }}
@@ -446,7 +461,7 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
                     {isLoadingTitles 
                         ? '正在规划...' 
                         : isMaxReached 
-                            ? '已完成规划' 
+                            ? '已完成规划 (篇幅上限)' 
                             : `规划接下来 ${nextBatchSize} 章标题 (${nextChapterStart}-${nextChapterStart + nextBatchSize - 1})`
                     }
                 </button>
@@ -524,10 +539,19 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
                         <div className="space-y-4">
                              <div className="p-4 bg-slate-950/50 rounded-lg border border-slate-700 max-h-[60rem] overflow-y-auto space-y-6">
                                 <div className="flex justify-between items-center pb-4 border-b border-slate-700">
-                                    <h4 className="text-xl font-bold text-slate-100">终版细纲 (v{parsedOutline.finalVersion})</h4>
-                                    <span className="font-mono text-sm bg-green-900/50 text-green-300 px-3 py-1 rounded-full">
-                                        最终评分: {parsedOutline.optimizationHistory[parsedOutline.optimizationHistory.length - 1]?.critique.overallScore.toFixed(1) || 'N/A'}
-                                    </span>
+                                    <div className="flex items-center gap-x-3">
+                                        <h4 className="text-xl font-bold text-slate-100">终版细纲 (v{parsedOutline.finalVersion})</h4>
+                                        <span className="font-mono text-sm bg-green-900/50 text-green-300 px-3 py-1 rounded-full">
+                                            评分: {parsedOutline.optimizationHistory[parsedOutline.optimizationHistory.length - 1]?.critique.overallScore.toFixed(1) || 'N/A'}
+                                        </span>
+                                    </div>
+                                    <button 
+                                        onClick={() => onStartWriting(activeOutlineTitle, outlineHistory[activeOutlineTitle])}
+                                        className="flex items-center gap-x-2 px-4 py-2 bg-gradient-to-r from-teal-600 to-sky-600 hover:from-teal-500 hover:to-sky-500 text-white font-bold rounded-lg shadow-lg transition-transform transform hover:scale-105"
+                                    >
+                                        <FilePenIcon className="w-5 h-5"/>
+                                        <span>✨ 开始创作本章正文</span>
+                                    </button>
                                 </div>
                                 
                                 {parsedOutline.plotPoints.map((point: PlotPointAnalysis, index: number) => (

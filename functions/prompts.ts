@@ -358,7 +358,8 @@ export const getChapterPrompts = (outline: StoryOutline, historyChapters: Genera
 
 **## 核心任务**
 你的任务是根据我提供的**【本章细纲分析】**，撰写小说正文。
-这份细纲是你的**剧情剧本**，但你的**写作方式**必须严格遵循【人类写作特征完全指南】。
+这份细纲是你的**剧情剧本**，你必须**严格遵守**其中规划的每一个剧情点、转折和细节。
+同时，你的**写作方式**必须严格遵循【人类写作特征完全指南】。
 我们要的不是一篇工整的AI文章，而是一篇**有瑕疵、有棱角、有温度的人类小说**。
 
 ${HUMAN_WRITING_GUIDELINES}
@@ -372,7 +373,7 @@ ${HUMAN_WRITING_GUIDELINES}
 
 **## 绝对禁令**
 -   绝对禁止使用违禁词库中的词汇：**${options.forbiddenWords.join(', ')}**
--   绝对禁止偏离或删减【本章细纲分析】中的任何剧情点。
+-   **绝对禁止偏离、删减或私自篡改【本章细纲分析】中的任何剧情点。你的创造力应用于“如何写得像人”，而不是“改写剧情”。**
 `;
 
     const user = `
@@ -394,7 +395,7 @@ ${JSON.stringify(detailedChapterOutline, null, 2)}
 
 ---
 
-现在，请进入你的“${options.authorStyle}”人格，开始创作。确保内容不少于2000字。记住：**像个有血有肉的人类一样写作，不要像个完美的机器。**`;
+现在，请进入你的“${options.authorStyle}”人格，开始创作。确保内容不少于2000字。记住：**严格按剧本走，但像个有血有肉的人类一样写作。**`;
 
     return createPrompt(system, user);
 }

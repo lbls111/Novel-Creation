@@ -1,3 +1,4 @@
+
 import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { GameState } from './types';
 import type { StoryOutline, GeneratedChapter, StoryOptions, ThoughtStep, StoryLength, Citation, CharacterProfile, WritingMethodology, AntiPatternGuide, AuthorStyle, ActiveTab, WorldEntry, DetailedOutlineAnalysis, FinalDetailedOutline, LogEntry, OutlineGenerationProgress, WorldCategory } from './types';
@@ -626,6 +627,11 @@ const App: React.FC = () => {
         }
     };
     
+    // Callback to jump to writing immediately from outline
+    const handleWriteChapterFromOutline = (chapterTitle: string, outlineJson: string) => {
+        writeChapter(chapterTitle, outlineJson);
+    };
+    
     const regenerateLastChapter = () => {
         if(chapters.length === 0 || !storyOutline) return;
         
@@ -680,7 +686,6 @@ const App: React.FC = () => {
 
     const renderThoughtStepContent = (step: ThoughtStep) => {
         if (!step.content) return null;
-        // Check if content is likely JSON
         if (step.content.trim().startsWith('{')) {
             try {
                 const jsonObj = JSON.parse(step.content);
@@ -692,9 +697,7 @@ const App: React.FC = () => {
                         </pre>
                     </div>
                 );
-            } catch (e) {
-                // Not valid JSON, fall through to render as text
-            }
+            } catch (e) { }
         }
         return <ThoughtProcessVisualizer text={step.content} refineCallback={handleRefineFromSuggestion} />;
     };
@@ -1032,7 +1035,8 @@ const App: React.FC = () => {
 
                 <main ref={workspaceRef} className="flex-grow overflow-y-auto bg-slate-900/30">
                     <div className="p-4 md:p-6">
-                        {activeTab === 'agent' && (
+                        {/* REFACTORED: Use CSS display property instead of conditional rendering to persist component state (like spinners) across tab switches. */}
+                        <div style={{ display: activeTab === 'agent' ? 'block' : 'none' }}>
                              <div className="space-y-4">
                                 {thoughtSteps.map(step => (
                                     <details key={step.id} data-step-id={step.id} className="glass-card rounded-lg" open>
@@ -1088,24 +1092,35 @@ const App: React.FC = () => {
                                     </div>
                                 )}
                             </div>
+                        </div>
+                        
+                        {storyOutline && (
+                            <>
+                                <div style={{ display: activeTab === 'worldbook' ? 'block' : 'none' }}>
+                                    <WorldbookEditor storyOutline={storyOutline} onUpdate={updateStoryOutline} storyOptions={storyOptions} />
+                                </div>
+                                <div style={{ display: activeTab === 'characters' ? 'block' : 'none' }}>
+                                    <CharacterArchive storyOutline={storyOutline} onUpdate={updateStoryOutline} storyOptions={storyOptions}/>
+                                </div>
+                                <div style={{ display: activeTab === 'outline' ? 'block' : 'none' }}>
+                                    <OutlineGenerator 
+                                        storyOutline={storyOutline} 
+                                        chapters={chapters} 
+                                        generatedTitles={generatedTitles}
+                                        setGeneratedTitles={setGeneratedTitles}
+                                        outlineHistory={outlineHistory}
+                                        setOutlineHistory={setOutlineHistory}
+                                        storyOptions={storyOptions}
+                                        activeOutlineTitle={activeOutlineTitle}
+                                        setActiveOutlineTitle={setActiveOutlineTitle}
+                                        setController={setAbortController}
+                                        onStartWriting={handleWriteChapterFromOutline} // Pass the callback for auto-jump
+                                    />
+                                </div>
+                            </>
                         )}
-                        {activeTab === 'worldbook' && storyOutline && <WorldbookEditor storyOutline={storyOutline} onUpdate={updateStoryOutline} storyOptions={storyOptions} />}
-                        {activeTab === 'characters' && storyOutline && <CharacterArchive storyOutline={storyOutline} onUpdate={updateStoryOutline} storyOptions={storyOptions}/>}
-                        {activeTab === 'outline' && storyOutline && (
-                            <OutlineGenerator 
-                                storyOutline={storyOutline} 
-                                chapters={chapters} 
-                                generatedTitles={generatedTitles}
-                                setGeneratedTitles={setGeneratedTitles}
-                                outlineHistory={outlineHistory}
-                                setOutlineHistory={setOutlineHistory}
-                                storyOptions={storyOptions}
-                                activeOutlineTitle={activeOutlineTitle}
-                                setActiveOutlineTitle={setActiveOutlineTitle}
-                                setController={setAbortController}
-                            />
-                        )}
-                        {activeTab === 'writing' && (
+                        
+                        <div style={{ display: activeTab === 'writing' ? 'block' : 'none' }}>
                             <div className="max-w-4xl mx-auto">
                                 {chapters.map((chapter, index) => (
                                     <div key={chapter.id} className="mb-8 p-6 glass-card rounded-lg">
@@ -1173,7 +1188,7 @@ const App: React.FC = () => {
                                     </div>
                                 )}
                             </div>
-                        )}
+                        </div>
                     </div>
                 </main>
             </div>
