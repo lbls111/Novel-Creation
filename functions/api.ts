@@ -1,3 +1,4 @@
+
 import {
   getSearchPrompts,
   getChapterPrompts,
@@ -19,64 +20,46 @@ interface PagesFunctionContext {
 }
 
 // A more robust helper to extract a JSON object or array from a string.
+// REFACTORED: Now uses a greedy heuristic (First {/[ to Last }/]) which is much more robust against
+// Markdown formatting variations, extra text, or model chatter.
 const extractJsonFromText = (text: string): string => {
-    // 1. First, try to find a JSON object wrapped in markdown code blocks.
-    const markdownMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    // 1. Try to match markdown code blocks loosely (ignoring case or specific lang tag)
+    const markdownMatch = text.match(/```\w*\s*([\s\S]*?)\s*```/);
     if (markdownMatch && markdownMatch[1]) {
-        try { 
-            JSON.parse(markdownMatch[1]); 
-            return markdownMatch[1].trim(); 
-        } catch (e) { 
-            // The content inside the markdown block is not valid JSON, fall through to the next method.
-            console.warn("Markdown block found, but content was not valid JSON. Attempting other extraction methods.");
-        }
+        return markdownMatch[1].trim();
     }
 
-    // 2. If no valid markdown block, find the first occurrence of '{' or '['.
-    let startIndex = -1;
+    // 2. Heuristic: Find the widest possible JSON object wrapper.
+    // We look for the first '{' and the last '}'.
     const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    
+    // 3. Heuristic: Find the widest possible JSON array wrapper.
     const firstBracket = text.indexOf('[');
+    const lastBracket = text.lastIndexOf(']');
 
+    let jsonStart = -1;
+    let jsonEnd = -1;
+
+    // Determine if we should look for an object or an array based on which comes first
     if (firstBrace !== -1 && (firstBracket === -1 || firstBrace < firstBracket)) {
-        startIndex = firstBrace;
+        if (lastBrace > firstBrace) {
+            jsonStart = firstBrace;
+            jsonEnd = lastBrace;
+        }
     } else if (firstBracket !== -1) {
-        startIndex = firstBracket;
-    }
-
-    // If no JSON start character is found, return the original text, it might be a plain string response.
-    if (startIndex === -1) {
-        return text;
-    }
-
-    // 3. From the start index, find the matching closing bracket.
-    const startChar = text[startIndex];
-    const endChar = startChar === '{' ? '}' : ']';
-    
-    let openCount = 0;
-    for (let i = startIndex; i < text.length; i++) {
-        if (text[i] === startChar) {
-            openCount++;
-        } else if (text[i] === endChar) {
-            openCount--;
-        }
-
-        if (openCount === 0) {
-            const potentialJson = text.substring(startIndex, i + 1);
-            try {
-                // Final validation: does it parse?
-                JSON.parse(potentialJson);
-                return potentialJson;
-            } catch (e) {
-                // This substring is not valid JSON, which is strange.
-                // It might be a false positive. We break and return the original text below.
-                console.error("Found matching brackets, but content was not valid JSON.", potentialJson);
-                break; 
-            }
+        if (lastBracket > firstBracket) {
+            jsonStart = firstBracket;
+            jsonEnd = lastBracket;
         }
     }
-    
-    // 4. If all else fails, return the original text for the caller to handle.
-    console.warn("Could not extract a valid JSON object. Returning raw text.");
+
+    if (jsonStart !== -1 && jsonEnd !== -1) {
+        return text.substring(jsonStart, jsonEnd + 1);
+    }
+
+    // 4. If all heuristics fail, return original text. 
+    // This will likely fail JSON.parse, but the error message will now contain the raw text for debugging.
     return text;
 };
 
@@ -161,6 +144,8 @@ async function postOpenAIRequest(
 
 export const onRequestPost: (context: PagesFunctionContext) => Promise<Response> = async (context) => {
     let action: string | undefined;
+    let model: string = '';
+
     try {
         const { request } = context;
         const { action: reqAction, payload } = await request.json();
@@ -176,7 +161,6 @@ export const onRequestPost: (context: PagesFunctionContext) => Promise<Response>
         }
         
         let prompt: { role: string; content: string }[] = [];
-        let model: string = '';
         let isStreaming = false;
         
         switch (action) {
@@ -213,38 +197,49 @@ export const onRequestPost: (context: PagesFunctionContext) => Promise<Response>
         } else {
             const resultText = await postOpenAIRequest(options.apiBaseUrl, options.apiKey, model, prompt, options);
             let responseBody;
+            
+            // Extract JSON with enhanced robustness
             const jsonText = extractJsonFromText(resultText);
 
-            switch (action) {
-                case 'generateChapterTitles': {
-                    responseBody = { titles: JSON.parse(jsonText) };
-                    break;
+            try {
+                switch (action) {
+                    case 'generateChapterTitles': {
+                        responseBody = { titles: JSON.parse(jsonText) };
+                        break;
+                    }
+                    case 'generateDetailedOutline': {
+                        responseBody = { outline: JSON.parse(jsonText) as DetailedOutlineAnalysis };
+                        break;
+                    }
+                    case 'critiqueDetailedOutline': {
+                        responseBody = { critique: JSON.parse(jsonText) as OutlineCritique };
+                        break;
+                    }
+                    case 'generateNewCharacterProfile': {
+                        JSON.parse(jsonText); // Just validation
+                        responseBody = { text: jsonText };
+                        break;
+                    }
+                    case 'performSearch':
+                        responseBody = { text: resultText, citations: [] }; 
+                        break;
+                    case 'editChapterText':
+                    case 'getWorldbookSuggestions':
+                    case 'getCharacterArcSuggestions':
+                    case 'getNarrativeToolboxSuggestions':
+                        responseBody = { text: resultText }; 
+                        break;
+                    default:
+                        responseBody = { text: resultText };
                 }
-                case 'generateDetailedOutline': {
-                    responseBody = { outline: JSON.parse(jsonText) as DetailedOutlineAnalysis };
-                    break;
-                }
-                 case 'critiqueDetailedOutline': {
-                    responseBody = { critique: JSON.parse(jsonText) as OutlineCritique };
-                    break;
-                }
-                case 'generateNewCharacterProfile': {
-                    JSON.parse(jsonText); // Validation
-                    responseBody = { text: jsonText };
-                    break;
-                }
-                case 'performSearch':
-                    responseBody = { text: resultText, citations: [] }; // Special case, might not be JSON
-                    break;
-                case 'editChapterText':
-                case 'getWorldbookSuggestions':
-                case 'getCharacterArcSuggestions':
-                case 'getNarrativeToolboxSuggestions':
-                    responseBody = { text: resultText }; // Special case, might not be JSON
-                    break;
-                default:
-                    responseBody = { text: resultText };
+            } catch (e: any) {
+                // IMPORTANT: Provide transparent error feedback
+                console.error(`JSON Parsing Failed for Model [${model}]`);
+                console.error(`Raw output: ${resultText}`);
+                const preview = resultText.length > 500 ? resultText.substring(0, 500) + '... (truncated)' : resultText;
+                throw new Error(`Model [${model}] Output Error: The model returned invalid JSON. \n\nError: ${e.message}\n\nRaw Output Preview:\n${preview}`);
             }
+
             return new Response(JSON.stringify(responseBody), { headers: { 'Content-Type': 'application/json' }});
         }
 
@@ -256,16 +251,17 @@ export const onRequestPost: (context: PagesFunctionContext) => Promise<Response>
             const upstreamStatus = parseInt(upstreamMatch[1], 10);
             const rawUpstreamBody = message.substring(message.indexOf('-') + 1).trim();
             if (upstreamStatus === 504 || upstreamStatus === 524) {
-                message = "AI模型响应超时 (Gateway Timeout)。这通常在处理复杂请求（如生成多轮优化的细纲）时发生。建议：\n1. 在“细纲”设置中减少“最大优化次数”。\n2. 在系统设置中更换一个更快的模型（如Flash模型）用于规划。"; status = 504;
+                message = `模型 [${model}] 响应超时 (Gateway Timeout)。建议：\n1. 减少“最大优化次数”。\n2. 尝试使用更快的模型（如Flash）。`; status = 504;
             } else if (upstreamStatus === 401) { message = "API密钥无效或未授权。请在设置中检查您的API密钥。"; status = 401;
-            } else if (upstreamStatus === 429) { message = "已达到API速率限制 (Rate Limit Exceeded)。请稍后重试或检查您的API账户用量。"; status = 429;
+            } else if (upstreamStatus === 429) { message = "已达到API速率限制 (Rate Limit Exceeded)。请稍后重试。"; status = 429;
             } else if (upstreamStatus === 400) {
                 let upstreamError = "上游API报告了一个请求错误。";
                 try { const errJson = JSON.parse(rawUpstreamBody); upstreamError = errJson.error?.message || rawUpstreamBody; } catch {}
                  message = `请求错误 (Bad Request): ${upstreamError}`; status = 400;
             } else { message = `上游API服务器错误 (状态码: ${upstreamStatus})。请稍后重试。`; status = upstreamStatus >= 500 ? 502 : 500; }
         }
-        console.error(`[${new Date().toISOString()}] Action: ${action || 'unknown'} | Status: ${status} | Error: ${message}`);
+        
+        console.error(`[${new Date().toISOString()}] Action: ${action || 'unknown'} | Model: ${model} | Status: ${status} | Error: ${message}`);
         return new Response(JSON.stringify({ error: message }), { status, headers: { 'Content-Type': 'application/json' } });
     }
 };
