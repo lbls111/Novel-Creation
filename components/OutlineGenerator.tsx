@@ -215,7 +215,6 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
             const match = text.match(regex);
             
             if (!match || !match[1]) {
-                // Return null here, handle error in useEffect
                 return null;
             }
             
@@ -227,7 +226,7 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
         }
     }, [activeOutlineTitle, outlineHistory]);
 
-    // Effect to detect parsing errors
+    // Effect to detect parsing errors and show them in UI
     useEffect(() => {
         if (activeOutlineTitle && outlineHistory[activeOutlineTitle] && !parsedOutline) {
             setError(`解析章节 "${activeOutlineTitle}" 的细纲数据失败。数据可能已损坏，请尝试重新生成。`);
