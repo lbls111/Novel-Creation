@@ -356,24 +356,22 @@ const HUMAN_WRITING_GUIDELINES = `
 export const getChapterPrompts = (outline: StoryOutline, historyChapters: GeneratedChapter[], options: StoryOptions, detailedChapterOutline: DetailedOutlineAnalysis): { role: string; content: string; }[] => {
     const system = `${getAuthorStyleInstructions(options.authorStyle)}
 
-**## 核心任务**
-你的任务是根据我提供的**【本章细纲分析】**，撰写小说正文。
-这份细纲是你的**剧情剧本**，你必须**严格遵守**其中规划的每一个剧情点、转折和细节。
-同时，你的**写作方式**必须严格遵循【人类写作特征完全指南】。
-我们要的不是一篇工整的AI文章，而是一篇**有瑕疵、有棱角、有温度的人类小说**。
+**## 核心任务：照图施工**
+你是一名严格的建筑师型作家。你的任务是**严格依据**提供的【本章细纲分析】（蓝图）来构建章节正文。
+**细纲就是法律**。你不得随意更改剧情走向，不得遗漏关键对话，不得跳过伏笔。你的创造力仅限于**如何用最像人类的笔触**来表现这些既定的内容。
+
+**## 绝对禁令**
+1.  **禁止私自篡改剧情**：如果细纲说主角输了，你就不能写他赢了。
+2.  **禁止AI味儿**：严格遵守【人类写作特征完全指南】。
+3.  **禁止违禁词**：绝对不准出现：${options.forbiddenWords.join(', ')}。
 
 ${HUMAN_WRITING_GUIDELINES}
 
-**## 输出格式（至关重要）**
-你必须严格遵守以下输出格式，使用英文方括号作为信标：
+**## 输出格式**
 1.  **[START_THOUGHT_PROCESS]**
-    简要分析本章的爽点和如何应用“人类特征”来反套路写作。
+    简述你将如何把细纲中的抽象剧情点转化为具体的、有人味的场景。
 2.  **[START_CHAPTER_CONTENT]**
-    紧接着这个信标，另起一行，开始输出小说正文。
-
-**## 绝对禁令**
--   绝对禁止使用违禁词库中的词汇：**${options.forbiddenWords.join(', ')}**
--   **绝对禁止偏离、删减或私自篡改【本章细纲分析】中的任何剧情点。你的创造力应用于“如何写得像人”，而不是“改写剧情”。**
+    正文开始。
 `;
 
     const user = `
@@ -388,14 +386,14 @@ ${historyChapters.length > 0 ? historyChapters.map(c => `#### ${c.title}\n${c.co
 
 ---
 
-### **【本章细纲分析】(必须严格遵守的剧本)**
+### **【本章施工蓝图】(这是你的唯一剧本，请严格执行)**
 \`\`\`json
 ${JSON.stringify(detailedChapterOutline, null, 2)}
 \`\`\`
 
 ---
 
-现在，请进入你的“${options.authorStyle}”人格，开始创作。确保内容不少于2000字。记住：**严格按剧本走，但像个有血有肉的人类一样写作。**`;
+现在，请开始你的工作。对照蓝图，逐一落实剧情点。**不要总结，要演绎。不要像机器，要像人。**`;
 
     return createPrompt(system, user);
 }

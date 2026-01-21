@@ -26,6 +26,7 @@ import ClipboardListIcon from './components/icons/ClipboardListIcon';
 import LogViewer from './components/LogViewer';
 import ThoughtProcessVisualizer from './components/ThoughtProcessVisualizer';
 import StopCircleIcon from './components/icons/StopCircleIcon';
+import WritingWorkbench from './components/WritingWorkbench';
 
 
 const storyStyles = {
@@ -529,7 +530,7 @@ const App: React.FC = () => {
             status: 'streaming',
         };
         setChapters([...historyChapters, newChapter]);
-        scrollToBottom(workspaceRef);
+        // No longer scrolling to bottom immediately, as workbench handles scrolling
         
         const ac = new AbortController();
         setAbortController(ac);
@@ -648,33 +649,10 @@ const App: React.FC = () => {
         writeChapter(targetTitle, targetOutline, historyChapters);
     }
     
-    const handleEditSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if(!editInput.trim() || isEditing || chapters.length === 0) return;
-
+    const handleEditUpdate = (newContent: string) => {
+        if (chapters.length === 0) return;
         const lastChapter = chapters[chapters.length - 1];
-        if(!lastChapter || lastChapter.status !== 'complete') return;
-        
-        setIsEditing(true);
-        setError(null);
-        addLog(`开始微调最新章节... 指令: ${editInput}`, 'info');
-        const ac = new AbortController();
-        setAbortController(ac);
-
-        try {
-            const response = await editChapterText(lastChapter.content, editInput, storyOptions, ac.signal);
-            const newContent = response.text;
-            setChapters(prev => prev.map(c => 
-                c.id === lastChapter.id ? { ...c, content: newContent } : c
-            ));
-            setEditInput('');
-            addLog('文本微调成功。', 'success');
-        } catch (e: any) {
-           handleError(`文本修改失败: ${e.message}`);
-        } finally {
-            setIsEditing(false);
-            setAbortController(null);
-        }
+        setChapters(prev => prev.map(c => c.id === lastChapter.id ? { ...c, content: newContent } : c));
     };
 
     const handleRefineFromSuggestion = (textToRefine: string) => {
@@ -1034,7 +1012,7 @@ const App: React.FC = () => {
                 </div>
 
                 <main ref={workspaceRef} className="flex-grow overflow-y-auto bg-slate-900/30">
-                    <div className="p-4 md:p-6">
+                    <div className="p-4 md:p-6 h-full flex flex-col">
                         {/* REFACTORED: Use CSS display property instead of conditional rendering to persist component state (like spinners) across tab switches. */}
                         <div style={{ display: activeTab === 'agent' ? 'block' : 'none' }}>
                              <div className="space-y-4">
@@ -1120,38 +1098,23 @@ const App: React.FC = () => {
                             </>
                         )}
                         
-                        <div style={{ display: activeTab === 'writing' ? 'block' : 'none' }}>
-                            <div className="max-w-4xl mx-auto">
-                                {chapters.map((chapter, index) => (
-                                    <div key={chapter.id} className="mb-8 p-6 glass-card rounded-lg">
-                                        <h2 className="text-2xl font-bold text-teal-300 mb-4 border-b border-white/10 pb-2">{chapter.title}</h2>
-                                        {chapter.preWritingThought && (
-                                            <details className="mb-4">
-                                                <summary className="text-sm text-slate-400 cursor-pointer hover:text-slate-200">查看AI写作思路</summary>
-                                                <div className="mt-2 p-3 bg-slate-900/50 rounded-md text-slate-400 text-xs whitespace-pre-wrap font-mono border border-slate-700">
-                                                    {chapter.preWritingThought}
-                                                </div>
-                                            </details>
-                                        )}
-                                        <div className="prose prose-lg prose-invert max-w-none prose-p:leading-relaxed prose-p:text-slate-300">
-                                            {chapter.content.split('\n').map((paragraph, i) => (
-                                                <p key={i}>{paragraph}</p>
-                                            ))}
-                                            {chapter.status === 'streaming' && <span className="inline-block w-3 h-6 bg-slate-300 animate-pulse ml-1" />}
-                                        </div>
-                                    </div>
-                                ))}
-
-                                {gameState === GameState.WRITING && (
-                                    <div className="flex justify-center my-8">
-                                        <LoadingSpinner className="w-8 h-8 text-teal-400" />
-                                    </div>
-                                )}
-                                
-                                {gameState === GameState.CHAPTER_COMPLETE && (
-                                     <div className="mt-8 space-y-4">
-                                        <div className="flex items-center gap-x-4">
-                                            <button 
+                        {/* Writing Tab - Renders either the workbench or the "start writing" prompt */}
+                        <div style={{ display: activeTab === 'writing' ? 'block' : 'none' }} className="h-full">
+                            {chapters.length > 0 ? (
+                                <div className="h-full">
+                                    <WritingWorkbench
+                                        chapter={chapters[chapters.length - 1]}
+                                        outlineJson={outlineHistory[chapters[chapters.length - 1].title]}
+                                        isGenerating={gameState === GameState.WRITING}
+                                        onRegenerate={regenerateLastChapter}
+                                        onEdit={handleEditUpdate}
+                                        storyOptions={storyOptions}
+                                    />
+                                    
+                                    {/* Navigation for next chapter (outside workbench) */}
+                                    {gameState === GameState.CHAPTER_COMPLETE && nextChapterTitle && (
+                                        <div className="mt-4 flex justify-center pb-8">
+                                             <button 
                                                 title={writeButtonTooltip}
                                                 disabled={isWriteButtonDisabled || !storyOptions.writingModel}
                                                 onClick={() => {
@@ -1159,35 +1122,27 @@ const App: React.FC = () => {
                                                         writeChapter(nextChapterTitle, outlineHistory[nextChapterTitle]);
                                                     }
                                                 }} 
-                                                className="flex-grow flex items-center justify-center px-8 py-4 bg-teal-600 text-white font-bold rounded-lg hover:bg-teal-500 transition-transform transform hover:scale-105 shadow-lg disabled:bg-slate-600 disabled:cursor-not-allowed"
+                                                className="flex items-center justify-center px-8 py-3 bg-teal-600 text-white font-bold rounded-lg hover:bg-teal-500 transition-transform transform hover:scale-105 shadow-lg disabled:bg-slate-600 disabled:cursor-not-allowed"
                                             >
-                                                <FilePenIcon className="w-6 h-6 mr-2" />
-                                                写下一章: {nextChapterTitle || `第 ${nextChapterIndex + 1} 章`}
-                                            </button>
-                                            <button
-                                                onClick={regenerateLastChapter}
-                                                title="使用相同的细纲重新生成最后一章"
-                                                className="p-4 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-                                            >
-                                                <RefreshCwIcon className="w-6 h-6 text-white"/>
+                                                <FilePenIcon className="w-5 h-5 mr-2" />
+                                                创作下一章: {nextChapterTitle}
                                             </button>
                                         </div>
-                                        <form onSubmit={handleEditSubmit} className="flex items-center gap-x-2">
-                                            <input 
-                                                type="text"
-                                                value={editInput}
-                                                onChange={(e) => setEditInput(e.target.value)}
-                                                placeholder="输入指令对最新章节进行微调..."
-                                                className="w-full p-3 bg-slate-900/70 border border-slate-700 rounded-lg text-slate-200 focus:ring-2 focus:ring-sky-500 transition"
-                                                disabled={isEditing}
-                                            />
-                                            <button type="submit" className="p-3 bg-sky-600 hover:bg-sky-500 rounded-lg disabled:bg-slate-600" disabled={isEditing || !editInput.trim()}>
-                                                {isEditing ? <LoadingSpinner className="w-6 h-6 text-white"/> : <MagicWandIcon className="w-6 h-6 text-white"/>}
-                                            </button>
-                                        </form>
-                                    </div>
-                                )}
-                            </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-full text-slate-400 space-y-4">
+                                    <NotebookTextIcon className="w-16 h-16 text-slate-600"/>
+                                    <p>尚未开始正文创作。</p>
+                                    <p className="text-sm">请先在【细纲】模块完成章节规划，然后点击“开始创作正文”。</p>
+                                    <button 
+                                        onClick={() => setActiveTab('outline')}
+                                        className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors"
+                                    >
+                                        前往细纲规划
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </main>
