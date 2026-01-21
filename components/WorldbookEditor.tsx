@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import type { StoryOutline, WorldEntry, WorldCategory, StoryOptions } from '../types';
 import EditIcon from './icons/EditIcon';
@@ -5,6 +6,7 @@ import TrashIcon from './icons/TrashIcon';
 import PlusCircleIcon from './icons/PlusCircleIcon';
 import SparklesIcon from './icons/SparklesIcon';
 import LoadingSpinner from './icons/LoadingSpinner';
+import BrainCircuitIcon from './icons/BrainCircuitIcon';
 import { generateWorldbookSuggestions } from '../services/geminiService';
 import ThoughtProcessVisualizer from './ThoughtProcessVisualizer';
 
@@ -13,6 +15,13 @@ interface WorldbookEditorProps {
     onUpdate: (updates: Partial<StoryOutline>) => void;
     storyOptions: StoryOptions; // Added for API call
 }
+
+const ModelBadge: React.FC<{ model: string }> = ({ model }) => (
+    <div className="flex items-center gap-x-1.5 px-2 py-1 rounded-md bg-slate-800/80 border border-slate-700/50">
+        <BrainCircuitIcon className="w-3.5 h-3.5 text-teal-400" />
+        <span className="text-xs font-mono text-slate-400">模型: <span className="text-teal-300 font-semibold">{model || '未配置'}</span></span>
+    </div>
+);
 
 const WorldbookEditor: React.FC<WorldbookEditorProps> = ({ storyOutline, onUpdate, storyOptions }) => {
     const [categories, setCategories] = useState<WorldCategory[]>(storyOutline.worldCategories || []);
@@ -128,9 +137,12 @@ const WorldbookEditor: React.FC<WorldbookEditorProps> = ({ storyOutline, onUpdat
 
     return (
         <div className="glass-card p-6 rounded-lg space-y-6">
-            <div>
-                <h2 className="text-2xl font-bold text-slate-100">世界书 / Worldbook</h2>
-                <p className="text-slate-400 mt-1 text-sm">管理故事的核心设定。你在这里提供的描述越详细，AI在生成章节和细纲时就越能保证世界观的绝对一致性。</p>
+            <div className="flex justify-between items-start">
+                <div>
+                    <h2 className="text-2xl font-bold text-slate-100">世界书 / Worldbook</h2>
+                    <p className="text-slate-400 mt-1 text-sm">管理故事的核心设定。越详细的设定能保证AI创作的一致性。</p>
+                </div>
+                <ModelBadge model={storyOptions.planningModel} />
             </div>
 
             <div className="border-t border-white/10 pt-4">

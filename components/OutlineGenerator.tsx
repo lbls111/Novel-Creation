@@ -1,12 +1,13 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import type { StoryOutline, GeneratedChapter, StoryOptions, FinalDetailedOutline, PlotPointAnalysis, OutlineCritique, ScoringDimension, ImprovementSuggestion, OptimizationHistoryEntry, DetailedOutlineAnalysis, OutlineGenerationProgress } from '../types';
+import type { StoryOutline, GeneratedChapter, StoryOptions, FinalDetailedOutline, PlotPointAnalysis, OutlineCritique, ScoringDimension, ImprovementSuggestion, OptimizationHistoryEntry, DetailedOutlineAnalysis, OutlineGenerationProgress, StoryLength } from '../types';
 import { generateChapterTitles, generateDetailedOutline, critiqueDetailedOutline, generateNarrativeToolboxSuggestions } from '../services/geminiService';
 import SparklesIcon from './icons/SparklesIcon';
 import LoadingSpinner from './icons/LoadingSpinner';
 import SendIcon from './icons/SendIcon';
 import CopyIcon from './icons/CopyIcon';
 import RefreshCwIcon from './icons/RefreshCwIcon';
+import BrainCircuitIcon from './icons/BrainCircuitIcon'; // Reused for model indicator
 import ThoughtProcessVisualizer from './ThoughtProcessVisualizer';
 
 interface OutlineGeneratorProps {
@@ -21,6 +22,26 @@ interface OutlineGeneratorProps {
     setActiveOutlineTitle: React.Dispatch<React.SetStateAction<string | null>>;
     setController: React.Dispatch<React.SetStateAction<AbortController | null>>;
 }
+
+// Utility to parse max chapters from the StoryLength string
+const getMaxChapters = (lengthStr: StoryLength): number => {
+    // Expected formats: "超短篇(5-10章)", "长篇(100章以上)"
+    const match = lengthStr.match(/-(\d+)章/);
+    if (match && match[1]) {
+        return parseInt(match[1], 10);
+    }
+    // Fallback or handle "100章以上" (treat as 2000 for practical infinite)
+    if (lengthStr.includes('100章以上')) return 2000;
+    // Default fallback
+    return 30;
+};
+
+const ModelBadge: React.FC<{ model: string }> = ({ model }) => (
+    <div className="flex items-center gap-x-1.5 px-2 py-1 rounded-md bg-slate-800/80 border border-slate-700/50">
+        <BrainCircuitIcon className="w-3.5 h-3.5 text-teal-400" />
+        <span className="text-xs font-mono text-slate-400">模型: <span className="text-teal-300 font-semibold">{model || '未配置'}</span></span>
+    </div>
+);
 
 const AnalysisField: React.FC<{ label: string; value: any; color: string }> = ({ label, value, color }) => {
     if (!value) return null;
@@ -197,6 +218,12 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
     const [toolboxResult, setToolboxResult] = useState<string | null>(null);
     const [toolboxError, setToolboxError] = useState<string | null>(null);
 
+    // Calculate Limits
+    const maxChapters = useMemo(() => getMaxChapters(storyOptions.length), [storyOptions.length]);
+    const currentChapterCount = generatedTitles.length;
+    const remainingChapters = maxChapters - currentChapterCount;
+    const isMaxReached = remainingChapters <= 0;
+
     // Clear toolbox result when active outline changes
     useEffect(() => {
         setToolboxResult(null);
@@ -204,7 +231,6 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
         setError(null);
     }, [activeOutlineTitle]);
 
-    // Parse outline with error handling, BUT NO SIDE EFFECTS (like setError) inside useMemo
     const parsedOutline = useMemo<FinalDetailedOutline | null>(() => {
         if (!activeOutlineTitle || !outlineHistory[activeOutlineTitle]) return null;
         try {
@@ -239,6 +265,11 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
         // Validation: Check if planning model is set
         if (!storyOptions.planningModel) {
             setError("未配置规划模型。请在“设置”中选择一个模型（建议使用 Flash 模型以获得更快的速度）。");
+            return;
+        }
+
+        if (isMaxReached) {
+            setError("已达到当前篇幅设定的最大章节数。请在设置中调整篇幅，或直接开始创作。");
             return;
         }
 
@@ -377,30 +408,54 @@ const OutlineGenerator: React.FC<OutlineGeneratorProps> = ({
         handleGenerateAndCritique(adoptionPrompt);
     };
 
-    const nextChapterStart = chapters.length + 1;
+    const nextChapterStart = generatedTitles.length + 1;
+    // Determine how many chapters to ask for (max 10, or up to the limit)
+    const nextBatchSize = Math.min(10, remainingChapters);
 
     return (
         <div className="glass-card p-6 rounded-lg space-y-6">
-            <div>
-                <h2 className="text-2xl font-bold text-slate-100">章节细纲分析器</h2>
-                <p className="text-slate-400 mt-1 text-sm">此模块采用【创作-评估-优化】迭代循环。AI将扮演一个颠覆性的叙事架构师，遵循**“反套路创新”与“读者爽感”**双重核心。在确保逻辑自洽与深度布局的同时，它将**精准注入高密度、强反馈的情绪爽点**，持续优化直至评估达标，交付兼具市场潜力与艺术深度的创作蓝图。</p>
+            <div className="flex justify-between items-start">
+                <div>
+                    <h2 className="text-2xl font-bold text-slate-100">章节细纲分析器</h2>
+                    <p className="text-slate-400 mt-1 text-sm">【创作-评估-优化】迭代循环。AI扮演叙事架构师，遵循“反套路”与“爽感”核心。</p>
+                </div>
+                <ModelBadge model={storyOptions.planningModel} />
             </div>
             
             <div className="border-t border-white/10 pt-4">
+                <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm font-semibold text-slate-400">
+                        当前进度: <span className={isMaxReached ? "text-red-400" : "text-sky-400"}>{currentChapterCount}</span> / {maxChapters} 章
+                    </span>
+                    {isMaxReached && <span className="text-xs font-bold text-red-500 bg-red-900/20 px-2 py-1 rounded">篇幅已达上限</span>}
+                </div>
+                {/* Progress Bar */}
+                <div className="w-full bg-slate-800 rounded-full h-1.5 mb-4">
+                    <div 
+                        className={`bg-gradient-to-r ${isMaxReached ? 'from-red-600 to-red-400' : 'from-teal-600 to-sky-400'} h-1.5 rounded-full transition-all duration-500`} 
+                        style={{ width: `${Math.min(100, (currentChapterCount / maxChapters) * 100)}%` }}
+                    ></div>
+                </div>
+
                 <button
                     onClick={handleGenerateTitles}
-                    disabled={isGenerating || isLoadingTitles}
-                    className="w-full flex items-center justify-center px-4 py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-500 transition-transform transform hover:scale-105 shadow-lg disabled:bg-slate-600 disabled:cursor-not-allowed"
+                    disabled={isGenerating || isLoadingTitles || isMaxReached}
+                    className="w-full flex items-center justify-center px-4 py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-500 transition-transform transform hover:scale-105 shadow-lg disabled:bg-slate-600 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
                 >
                     {isLoadingTitles ? <LoadingSpinner className="w-5 h-5 mr-2" /> : <SparklesIcon className="w-5 h-5 mr-2" />}
-                    {isLoadingTitles ? '正在生成...' : `生成 ${generatedTitles.length + nextChapterStart}-${generatedTitles.length + nextChapterStart + 9} 章标题`}
+                    {isLoadingTitles 
+                        ? '正在规划...' 
+                        : isMaxReached 
+                            ? '已完成规划' 
+                            : `规划接下来 ${nextBatchSize} 章标题 (${nextChapterStart}-${nextChapterStart + nextBatchSize - 1})`
+                    }
                 </button>
             </div>
 
             {generatedTitles.length > 0 && (
                 <div className="border-t border-white/10 pt-4 space-y-3">
                      <h3 className="text-lg font-semibold text-slate-200">已生成标题列表 (点击选择)</h3>
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
                         {generatedTitles.map((title, index) => (
                             <button 
                                 key={index} 

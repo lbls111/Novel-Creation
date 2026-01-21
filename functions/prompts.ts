@@ -1,5 +1,5 @@
 
-import type { StoryOutline, GeneratedChapter, StoryOptions, CharacterProfile, DetailedOutlineAnalysis, WorldCategory, FinalDetailedOutline, OutlineCritique } from '../types';
+import type { StoryOutline, GeneratedChapter, StoryOptions, CharacterProfile, DetailedOutlineAnalysis, WorldCategory, FinalDetailedOutline, OutlineCritique, StoryLength } from '../types';
 
 // =================================================================
 // == UTILITY FUNCTIONS
@@ -39,6 +39,16 @@ const getAuthorStyleInstructions = (style: string): string => {
 
 const createPrompt = (system: string, user: string): { role: string; content: string; }[] => {
     return [{ role: "system", content: system }, { role: "user", content: user }];
+};
+
+// Helper to calculate max chapters from string
+const getMaxChapters = (lengthStr: StoryLength): number => {
+    const match = lengthStr.match(/-(\d+)章/);
+    if (match && match[1]) {
+        return parseInt(match[1], 10);
+    }
+    if (lengthStr.includes('100章以上')) return 2000;
+    return 30; // Default
 };
 
 
@@ -116,17 +126,34 @@ export const getSearchPrompts = (storyCore: string, options: StoryOptions): { ro
 }
 
 export const getChapterTitlesPrompts = (outline: StoryOutline, chapters: GeneratedChapter[], options: StoryOptions): { role: string; content: string; }[] => {
+    const maxChapters = getMaxChapters(options.length);
+    const currentCount = chapters.length;
+    const remainingSlots = maxChapters - currentCount;
+    // Ask for 10, or whatever is remaining.
+    const countToGenerate = Math.min(10, remainingSlots);
+    const isEnding = remainingSlots <= 10;
+
     const system = `你是一个网络小说编辑，擅长构思吸引人的章节标题。
-你的任务是根据故事大纲和已有的章节，为后续的10个章节生成标题。
+你的任务是根据故事大纲和已有的章节，为后续章节生成标题。
 你的输出必须是一个JSON数组的字符串形式，例如： \`["标题一", "标题二", ...]\`。
 不要添加任何额外的解释或markdown标记。`;
+    
+    let instructions = `请为第 ${currentCount + 1} 章到第 ${currentCount + countToGenerate} 章生成 ${countToGenerate} 个章节标题。`;
+    
+    if (isEnding) {
+        instructions += `\n**严重警告**: 本书设定的篇幅为 ${maxChapters} 章。目前是故事的尾声阶段。你必须在这 ${countToGenerate} 章内收束所有剧情线，并在第 ${maxChapters} 章彻底完结故事。`;
+    } else {
+        instructions += `\n请继续推动剧情发展，确保节奏紧凑。`;
+    }
+
     const user = `**重要提示**: 以下故事大纲是包含用户所有手动编辑的最新版本。在创作时请严格以此为准。
 
 故事大纲: ${outline.plotSynopsis}
 已有章节数量: ${chapters.length}
+预期总篇幅: ${options.length} (上限 ${maxChapters} 章)
 仿写作者风格: ${options.authorStyle}
 
-请为第 ${chapters.length + 1} 章到第 ${chapters.length + 10} 章生成10个章节标题。`;
+${instructions}`;
 
     return createPrompt(system, user);
 }

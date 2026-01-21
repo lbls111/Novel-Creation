@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import type { CharacterProfile, StoryOutline, StoryOptions, CustomField } from '../types';
 import { generateCharacterInteractionStream, generateNewCharacterProfile, generateCharacterArcSuggestions } from '../services/geminiService';
@@ -7,6 +8,7 @@ import PlusCircleIcon from './icons/PlusCircleIcon';
 import EditIcon from './icons/EditIcon';
 import TrashIcon from './icons/TrashIcon';
 import SparklesIcon from './icons/SparklesIcon';
+import BrainCircuitIcon from './icons/BrainCircuitIcon';
 import ThoughtProcessVisualizer from './ThoughtProcessVisualizer';
 
 
@@ -15,6 +17,13 @@ interface CharacterArchiveProps {
   onUpdate: (updates: Partial<StoryOutline>) => void;
   storyOptions: StoryOptions;
 }
+
+const ModelBadge: React.FC<{ model: string }> = ({ model }) => (
+    <div className="flex items-center gap-x-1.5 px-2 py-1 rounded-md bg-slate-800/80 border border-slate-700/50">
+        <BrainCircuitIcon className="w-3.5 h-3.5 text-teal-400" />
+        <span className="text-xs font-mono text-slate-400">模型: <span className="text-teal-300 font-semibold">{model || '未配置'}</span></span>
+    </div>
+);
 
 const CharacterField: React.FC<{ label: string; value: any }> = ({ label, value }) => {
     if (value === undefined || value === null || value === '') return null;
@@ -274,6 +283,11 @@ const CharacterArchive: React.FC<CharacterArchiveProps> = ({ storyOutline, onUpd
   return (
     <div className="space-y-4 p-1">
         <div className="glass-card p-4 rounded-lg">
+            <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-bold text-slate-100">角色管理</h3>
+                <ModelBadge model={storyOptions.planningModel} />
+            </div>
+
             {!showAddForm ? (
                 <button onClick={() => setShowAddForm(true)} className="w-full flex items-center justify-center p-3 text-sm font-semibold text-slate-200 bg-slate-700/50 hover:bg-slate-700/80 rounded-lg transition-colors">
                     <PlusCircleIcon className="w-5 h-5 mr-2 text-green-400"/>
@@ -281,7 +295,7 @@ const CharacterArchive: React.FC<CharacterArchiveProps> = ({ storyOutline, onUpd
                 </button>
             ) : (
                 <form onSubmit={handleGenerateNewCharacter} className="space-y-3">
-                    <h3 className="text-lg font-bold text-slate-100">生成新角色</h3>
+                    <h3 className="text-sm font-bold text-slate-300">生成新角色</h3>
                     <div>
                         <label htmlFor="new-char-prompt" className="block text-sm text-slate-400 mb-1">输入新角色概念：</label>
                         <input
